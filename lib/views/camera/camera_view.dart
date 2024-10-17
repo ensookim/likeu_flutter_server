@@ -1,8 +1,8 @@
-import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_likeu/extensions/space_exs.dart';
 import 'package:flutter_likeu/views/camera/components/custom_button.dart';
 import 'package:image_picker/image_picker.dart';
@@ -17,8 +17,10 @@ class CameraView extends StatefulWidget {
 }
 
 class _CameraViewState extends State<CameraView> {
+  XFile? _video;
   final ImagePicker _picker = ImagePicker();
   List<List<dynamic>> _csvData = []; // CSV 데이터를 저장할 리스트
+  bool _isLoading = false; // 로딩상태 추적
 
   @override
   Widget build(BuildContext context) {
@@ -60,77 +62,95 @@ class _CameraViewState extends State<CameraView> {
               ),
             ),
           ),
-          _openGalleryOrCameraButtonLoader(),
+          _loadGalleryOrCameraButton(),
+          if (_isLoading)
+            const CircularProgressIndicator(), // Show loading indicator
         ],
       ),
     );
   }
 
-  Widget _openGalleryOrCameraButtonLoader() {
-    return Row(
+  Widget _loadGalleryOrCameraButton() {
+    return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         CustomButton(
-          function: () {
+          function: () async {
             log('open gallery');
-            _pickVideoFromGallery();
+            final XFile? video =
+                await _picker.pickVideo(source: ImageSource.gallery);
+            setState(() {
+              if (video != null) {
+                _video = video;
+              }
+            });
           },
           buttonName: 'Gallery',
         ),
-        20.w,
+        20.h,
         CustomButton(
           function: () {
-            log("open camera");
+            log('UpLoad');
+            if (_video != null) {
+              requestVideoToFlask(_video!);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Selected Video!"),
+                ),
+              );
+            }
           },
-          buttonName: 'Camera',
-        ),
+          buttonName: 'UpLoad',
+        )
       ],
     );
   }
 
-  Future<void> _pickVideoFromGallery() async {
-    try {
-      final XFile? video = await _picker.pickVideo(source: ImageSource.gallery);
-      if (video != null) {
-        log('선택한 비디오 경로: ${video.path}');
-        await requestVideoToFlask(video.path);
-      } else {
-        log('선택한 비디오가 없음');
-      }
-    } catch (e) {
-      log('비디오 선택 중 오류 발생: $e');
-    }
-  }
+  Future<void> requestVideoToFlask(XFile videoPath) async {
+    String serverUrl = dotenv.get("FLASK_URL"); // Flask endpoint
 
-  Future<void> requestVideoToFlask(String videoPath) async {
-    const String serverUrl = 'http://192.168.25.14:3000/upload'; // Flask 엔드포인트
+    setState(() {
+      _isLoading = true; // Start loading
+    });
 
     try {
       var request = http.MultipartRequest('POST', Uri.parse(serverUrl));
-      request.files.add(await http.MultipartFile.fromPath('video', videoPath));
+      request.files
+          .add(await http.MultipartFile.fromPath('video', videoPath.path));
 
       var response = await request.send();
 
       if (response.statusCode == 200) {
-        // CSV 파일 저장
+        // Save CSV file
         final bytes = await response.stream.toBytes();
         final directory = await getApplicationDocumentsDirectory();
         final csvFile = File('${directory.path}/output.csv');
         await csvFile.writeAsBytes(bytes);
 
-        // CSV 파일 경로 로그 출력
-        log('CSV 파일 저장 경로: ${csvFile.path}');
+        // Log CSV file path
+        log('CSV file saved at: ${csvFile.path}');
 
-        // CSV 파일 내용 읽기
+        // Read CSV file content
         List<List<dynamic>> csvContent = await _readCsvFile(csvFile);
         setState(() {
           _csvData = csvContent;
         });
       } else {
-        log('서버 오류: ${response.statusCode}');
+        log('Server error: ${response.statusCode}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: ${response.statusCode}")),
+        );
       }
     } catch (e) {
-      log('Flask에 비디오 전송 중 오류 발생: $e');
+      log('Error sending video to Flask: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Failed to upload video")),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false; // Stop loading
+      });
     }
   }
 
