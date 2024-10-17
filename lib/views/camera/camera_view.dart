@@ -108,7 +108,8 @@ class _CameraViewState extends State<CameraView> {
   }
 
   Future<void> requestVideoToFlask(XFile videoPath) async {
-    String serverUrl = dotenv.get("FLASK_URL"); // Flask endpoint
+    // Flask_url을 dotenv에 작성해서 사용함
+    String serverUrl = dotenv.get("FLASK_URL");
 
     setState(() {
       _isLoading = true; // Start loading
